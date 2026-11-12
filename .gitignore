@@ -7,3 +7,8 @@ log/
 __pycache__/
 *.pyc
 .venv/
+
+# Local CAD and reference inputs are intentionally not published.
+/非夕双臂立柱机械臂底座-20260523.stp
+/reference.jpg
+/pics/flexiv-right-wrist-comparison.png

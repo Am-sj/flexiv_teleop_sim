@@ -10,7 +10,7 @@ class StaticRobotViewer:
     """Static robot arm viewer
     
     Display specified type of robot arm in simulation environment, supports multiple robot arm types:
-    arx-x5, so100, xarm6_robotiq, panda, x_fetch, unitree_h1
+    arx-x5, so100, xarm6_robotiq, panda, flexiv_rizon4, x_fetch, unitree_h1
     """
     
     def __init__(self, scene: str, robot_uids: str, pose_name: str = "default"):
@@ -106,6 +106,11 @@ class StaticRobotViewer:
                 else:
                     print("Fetch using default pose")
                     
+            elif self.robot_uids == "flexiv_rizon4":
+                keyframe = agent.keyframes["home" if self.pose_name == "home" else "rest"]
+                agent.reset(keyframe.qpos)
+                agent.robot.set_root_pose(keyframe.pose)
+
             elif self.robot_uids == "panda":
                 # Panda robot arm
                 if self.pose_name == "home":
@@ -233,7 +238,7 @@ def main():
         '--robot', '-r', 
         type=str, 
         default='so100',
-        choices=['arx-x5', 'so100', 'xarm6_robotiq', 'panda', 'x_fetch', 'unitree_h1', 'piper','widowx250s'],
+        choices=['arx-x5', 'so100', 'xarm6_robotiq', 'panda', 'flexiv_rizon4', 'x_fetch', 'unitree_h1', 'piper','widowx250s'],
         help='Select robot arm type to display'
     )
     parser.add_argument(
@@ -273,4 +278,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

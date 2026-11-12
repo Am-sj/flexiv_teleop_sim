@@ -1,226 +1,160 @@
-# 🤖 Lerobot Anything
+# Flexiv Teleop Sim
 
-[![en](https://img.shields.io/badge/lang-en-blue.svg)](README.md)
-[![ROS Noetic](https://img.shields.io/badge/ROS-Noetic-brightgreen.svg)](https://www.ros.org/)
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-20.04-orange.svg)](https://ubuntu.com/)
-[![Arxiv](https://img.shields.io/badge/arXiv-2509.02437-b31b1b.svg
-)](https://arxiv.org/abs/2509.02437)
-[![Apache License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+基于本仓库的 ManiSkill / SAPIEN 仿真，用 UArm 控制 Flexiv Rizon4，
+并提供两台 Rizon4 安装在立柱底座上的双臂仿真场景。机械臂均配备
+Flexiv Grav（Flexiv-GN01）夹爪。
 
-<p align="center">
-  <img src="pics/Xarm.gif" width="30%" alt="xArm Demo" />
-  <img src="pics/Dobot.gif" width="30%" alt="Dobot Demo" />
-  <img src="pics/Arx.gif" width="30%" alt="ARX Demo" />
-</p>
+![双臂 Flexiv 仿真](pics/flexiv-dual-arm.png)
 
----
+## 当前功能
 
-> **🚀 Bringing Leader-Follower teleoperation system to every real robot and robot arm -- Cheaper, Smoother, Plug-and-Play**
-> **💵 Starts from $60 cost!! Then controls any robot arm system!!**
+| 功能 | 入口 | 是否需要 UArm |
+| --- | --- | --- |
+| 单臂 Rizon4 + Grav 模型查看 | `static_robot_viewer.py` | 否 |
+| UArm → 单臂 Rizon4 串口遥操作 | `teleop_sim.py` | 是，8 个舵机通道 |
+| 双臂 Rizon4 + Grav + STEP 立柱底座 | `dual_flexiv_viewer.py` | 否 |
+| 双臂独立关节、末端位姿和夹爪控制接口 | `FlexivDualArm-v1` | 否，可通过 Python 控制 |
+| 无窗口 CPU 物理运行 | `dual_flexiv_viewer.py --headless` | 否 |
 
-*Built upon the giants: [LeRobot](https://github.com/huggingface/lerobot), [SO-100/SO-101](https://github.com/TheRobotStudio/SO-ARM100), [XLeRobot](https://github.com/Vector-Wangel/XLeRobot#), [Gello](https://github.com/wuphilipp/gello_mechanical/tree/main)*
+**双臂装配和控制接口已实现，双 UArm 串口遥操作尚未接入。**
+`teleop_sim.py` 当前控制一台仿真机械臂；`dual_flexiv_viewer.py` 展示双臂并保持初始姿态。
+这些入口不连接真实 Flexiv 机械臂，也不调用 Flexiv RDK。
 
-# 📰 News
-- 2026-3-04:- 2026-03-04: **Dual_Arm (OpenArm)** Added OpenArm-based dual-arm teleoperation support and STL releases.
-- 2025-11-10: **Global version** based on Feetech STS3215 servo is launched! Check [here](https://docs.google.com/document/d/1dUN4sJhYx_iuS_rFvj-YpyX4Y7nneRDTKJxCQ7PTXpY/edit?usp=sharing).
-- 2025-11-1: We add support for SO-100 and XLeRobot Teleoperation! Check [here](github.com/MINT-SJTU/LeRobot-Anything-U-Arm/tree/main/src/uarm/scripts/Follower_Arm/LeRobot).
-- 2025-09-10: STEP files of 3 configs are uploaded.
-- 2025-09-08: Hardware Assembly Video Uploaded! We also open-sourced 5 datasets collected by UArm with XArm6 at [our huggingface page](https://huggingface.co/MINT-SJTU)
-- 2025-08-15: **LeRobot Anything UArm 0.1.0** hardware setup, the 1st version fully capable for three major robot arm configurations, starts from 60$.
+## 环境准备
 
----
+当前已验证环境为 Ubuntu、Python 3.10、PyTorch 2.8.0、SAPIEN 3.0.1、
+Gymnasium 0.29.1、PySerial 3.5。沿用已有的 `uarm` 环境即可：
 
-# 📋 Table of Contents
+```bash
+conda activate uarm
+# 从仓库根目录进入仿真目录
+cd src/simulation
+```
 
-- [Overview](#-overview)
-- [✨ Features](#-features)
-- [💵 Total Cost](#-total-cost-)
-- [🤖 Supported Robots (find your robot in the list!)](#-supported-robots)
-- [🚀 Quick Start](#-quick-start)
-- [🔮 Roadmap](#-roadmap)
-- [🤝 Contributing](#-contributing)
-- [🔧 Tired of DIY? Order Now](#-Order-Link)
----
+后文的启动命令均在 `src/simulation` 中执行，使 Python 优先加载仓库内
+包含 Flexiv 适配的 `mani_skill`。只安装 PyPI 上的 ManiSkill 不会包含本仓库的新增模型和场景。
 
-## 🎯 Overview
+已有环境能运行时，无需重新安装依赖。新环境的完整依赖清单见
+[requirements.txt](requirements.txt)，从仓库根目录安装：
 
-LeRobot Anything is a **low-cost, universal, leader-follower teleoperation system** for any commercial robot arms through 3 hardware configurations. Designed for researchers, educators, and robotics enthusiasts, it provides a standardized interface for diverse robot platforms. This project focus on extending the Lerobot to control any real robot in both real scene and simulation. 
+```bash
+python -m pip install -r requirements.txt
+```
 
-For detail, see our technical report [here](https://arxiv.org/abs/2509.02437).
+窗口显示、离屏渲染图片都需要可用的 Vulkan/GPU；纯 CPU 无窗口物理运行不需要渲染器。
+运行现有模型不需要 ROS、Flexiv RDK、CAD 软件，也不需要重新下载模型。
 
-### 🎯 Target Environment (Docker coming soon)
+## 快速开始
 
-- **OS**: Ubuntu 20.04
-- **ROS**: Noetic
-- **Simulation**: SAPIEN integration (Built upon [ManiSkill](https://github.com/haosulab/ManiSkill))
+### 查看单臂
 
----
+```bash
+python static_robot_viewer.py --robot flexiv_rizon4 --pose home
+```
 
-## ✨ Features
+### 用 UArm 遥操作单臂
 
-| Feature                             | Description                                                                   |
-| ----------------------------------- | ----------------------------------------------------------------------------- |
-| 🔄**Universal Compatibility** | Four teleop configurations covering **most (95%) commercial robot arms** |
-| 📡**ROS Integration**         | Native ROS1 support with `/servo_angles` topic publishing                   |
-| 🎮**Real-time Control**       | Low-latency joint-space control                                        |
-| 🔌**Plug & Play**             | Easy follower-arm integration with provided examples                          |
-| 🛠️**Extensible**            | Simple API for adding new robot support                                       |
-| 💰**Cost-effective**          | Ultra low-cost hardware solution                                              |
-| 🎯**Optimized Hardware**      | Move smoothly and flexibly                                                    |
-| 💻**Simulation Test**         | Support teleoperation test in simulation environment                                  |
+连接 Zhonglin 串口版 UArm，确认端口后运行：
 
-### 🎮 Ready-to-Use Examples
+```bash
+python teleop_sim.py --robot flexiv_rizon4 --scene Empty-v1 --serial-port /dev/ttyUSB0
+```
 
-**Real Robot Examples:**
+1. 等待仿真窗口打开，此时机械臂保持初始姿态，不会跟随 UArm。
+2. 将 UArm 调整到合适的参考姿态，松开夹爪扳机并保持不动。
+3. 切回**启动程序的终端**，按 **Enter** 完成标定并开始跟随。
+4. 按扳机切换夹爪开合。输入 `q` 后回车，或按 Ctrl+C 退出。
 
-<p align="center">
+标定读取失败时不会开始跟随，可按 Enter 重试。完成标定后，再按 Enter 不会重新选取零位；
+需要重新标定时退出并重启程序。
 
-| Dobot CR5 | xArm Series | ARX5 |
-|-----------|-------------|------|
-| <img src="pics/Dobot.gif" width="200" alt="Dobot CR5 Real Robot" /> | <img src="pics/Xarm.gif" width="200" alt="xArm Series Real Robot" /> | <img src="pics/Arx.gif" width="200" alt="ARX5 Real Robot" /> |
+| UArm 舵机 ID | 仿真动作 |
+| --- | --- |
+| `000` | `joint1` |
+| `001` | `joint2`，角度偏移反向 |
+| `002–006` | `joint3–joint7`，按顺序对应 |
+| `007` | Grav 夹爪开合切换 |
 
-</p>
+机械臂使用相对映射：
 
-**Simulation Examples:**
+```text
+仿真目标角度 = 仿真初始角度 + 方向 ×（UArm 当前角度 − 手动标定角度）
+方向 = [1, -1, 1, 1, 1, 1, 1]
+```
 
-<p align="center">
+计算后的目标角度受 Rizon4 关节限位约束。扳机相对标定位置转到 **−40° 或以下**时切换一次开合，
+松回 **−30° 或以上**后可再次触发。夹爪初始张开，按住不重复触发，松开保持当前状态。
 
-| SO100 | ARX-X5 | XLeRobot |
-|-------|--------|----------|
-| <img src="pics/so100-sim.gif" width="200" alt="SO100 Simulation" /> | <img src="pics/arx-x5-sim.gif" width="200" alt="ARX-X5 Simulation" /> | <img src="pics/x_fetch-sim.gif" width="200" alt="XLeRobot Simulation" /> |
+### 查看双臂装配
 
-| xArm Series | Franka Panda | Piper |
-|-------------|--------------|-------------|
-| <img src="pics/xarm6_robotiq-sim.gif" width="200" alt="xArm Series Simulation" /> | <img src="pics/panda-sim.gif" width="200" alt="Franka Panda Simulation" /> | <img src="pics/piper-sim.gif" width="200" alt="Piper Simulation" /> |
+```bash
+python dual_flexiv_viewer.py
+```
 
-</p> 
+使用提供的 `非夕双臂立柱机械臂底座-20260523.stp` 转换后的底座网格：
 
-## 💵 Total Cost 💵
+- 左右按**机器人自身视角**定义，正面观察时与画面左右相反。
+- 左臂航插朝下，右臂航插朝上；安装盘中心间距为 **500 mm**。
+- 保留两侧 Grav 夹爪、两臂之间及机械臂与底座之间的碰撞。
+- 初始关节姿态参照 `reference.jpg` 调整；这是单张照片的近似复现，不是实机测量角度。
+- 底座固定在世界坐标中，脚轮为静态几何。
 
-> [!NOTE]
-> Cost excludes 3D printing, tools, shipping, and taxes.
+无窗口运行或保存预览：
 
-| Price                             | US             | EU              | CN               |
-| --------------------------------- | -------------- | --------------- | ---------------- |
-| **Basic** (use your laptop) | **~$60** | **~€60** | **~¥360** |
-| ↑ Servos                         | +$60           | +€60           | +¥405           |
+```bash
+# 纯 CPU 物理运行，不打开窗口
+python dual_flexiv_viewer.py --headless --duration 2
 
----
+# 离屏渲染，需要 Vulkan/GPU
+python dual_flexiv_viewer.py --headless --duration 1 --output /tmp/dual_flexiv.png
+```
 
-## 🤖 Supported Robots (find your robot in the list!)
+## 双臂配置与控制
 
-| Configuration                                                                                                         | Compatible Robot Arms                                                                      | Status   |
-| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------- |
-| [**Config 1**](https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm/tree/main/mechanical/Config1_STL) | Xarm6, Fanuc LR Mate 200iD, Trossen ALOHA, Agile PiPER, Realman RM65B, KUKA LBR iiSY Cobot | ✅ Ready |
-| [**Config 2**](https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm/tree/main/mechanical/Config2_STL) | Dobot CR Series, UR5 Series, ARX R5, AUBO i5, JAKA Zu Series, FAIRINO FR Series                                                 | ✅ Ready |
-| [**Config 3**](https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm/tree/main/mechanical/Config3_STL) | Franka FR3, Franka Emika Panda, Flexiv Rizon, Realman RM75B , Xarm7                               | ✅ Ready |
+环境 ID 为 `FlexivDualArm-v1`，两个独立控制条目分别为：
 
-> 💡 **This is only part of our supported robots! For more robots, you can compare their mechanical configuration with each U-Arm to confirm which one fits your need (in most cases it will).
+| 机械臂 | 动作字典键 | 基座位置 / m | 航插方向 |
+| --- | --- | --- | --- |
+| 左臂 | `flexiv_rizon4-0` | `(0.115, 0.250, 1.305)` | 向下 |
+| 右臂 | `flexiv_rizon4-1` | `(0.115, -0.250, 1.305)` | 向上 |
 
----
+在 `pd_joint_pos` 模式下，每臂动作是 **7 个绝对关节角（弧度）+ 1 个夹爪指令**。
+夹爪指令 `+1` 为张开、`-1` 为闭合。两臂动作通过字典传入，不是拼接为一个 16 维数组。
 
-## 🚀 Quick Start
+固定安装与初始关节姿态都记录在
+[assembly.json](src/simulation/mani_skill/assets/scenes/flexiv_dual_arm/assembly.json)：
 
-> [!NOTE]
-> If you are totally new to programming, please spend at least a day to get yourself familiar with basic Python, Ubuntu and GitHub (with the help of Google and AI). At least you should know how to set up Ubuntu system, git clone, pip install, use interpreters (VS Code, Cursor, PyCharm, etc.) and directly run commands in the terminals.
+| 字段 | 作用 |
+| --- | --- |
+| `mounts.left/right.position` | 基座安装位置，单位米 |
+| `mounts.left/right.quaternion_wxyz` | 基座安装旋转，顺序为 `w, x, y, z` |
+| `mounts.left/right.arm_qpos` | 初始七轴关节角，单位弧度 |
 
-1. 💵 **Buy your parts**: [Bill of Materials](https://docs.google.com/document/d/1TjhJOeJXsD5kmoYF-kuWfPju6WSUeSnivJiU7TH4vWs/edit?tab=t.0#heading=h.k991lzlarfb8)
-2. 🖨️ **Print your stuff**: [3D printing](https://github.com/MINT-SJTU/Lerobot-Anything-U-arm/tree/main/mechanical)
-3. 🔨 **Assemble**! [Assembly Guide](https://www.youtube.com/watch?v=-gpYuN2LlVs)
-4. 💻 **Software Env Set up & Real-world Teleop**: [Get your robot moving!](https://github.com/MINT-SJTU/Lerobot-Anything-Uarm/blob/main/howtoplay.md)
-5. 🎮 **Simulation**: [Try it out in SAPIEN!](https://github.com/MINT-SJTU/Lerobot-Anything-U-arm/blob/main/src/simulation/README.md)
+只想调整摆臂和腕部姿态时，修改 `arm_qpos`，重启后生效。
+安装坐标、完整 Python 控制示例和 CAD 转换说明见[双臂装配文档](src/simulation/DUAL_FLEXIV.md)。
 
-For detailed hardware guide, check  [Hardware Guide](https://docs.google.com/document/d/1TjhJOeJXsD5kmoYF-kuWfPju6WSUeSnivJiU7TH4vWs/edit?tab=t.0#heading=h.k991lzlarfb8)
+## 验证
 
+无需连接 UArm、无需打开窗口：
 
+```bash
+python -m unittest test_dual_flexiv test_flexiv_rizon4 test_teleop_sim
+```
 
----
+覆盖安装方向、关节限位、双臂独立控制、夹爪联动与接触释放、手动标定和扳机切换。
+串口硬件与交互窗口仍需在实际设备上验证。
 
-## 🔮 Roadmap
+## 文档与代码入口
 
-### 🎯 TO-DO List
+| 内容 | 路径 |
+| --- | --- |
+| 仿真运行、API 与常见问题 | [src/simulation/README.md](src/simulation/README.md) |
+| 双臂坐标、准备姿态与控制示例 | [src/simulation/DUAL_FLEXIV.md](src/simulation/DUAL_FLEXIV.md) |
+| UArm 串口读取、手动标定、动作映射 | [teleop_sim.py](src/simulation/teleop_sim.py) |
+| 双臂查看器 | [dual_flexiv_viewer.py](src/simulation/dual_flexiv_viewer.py) |
+| 双臂环境 | [flexiv_dual_arm.py](src/simulation/mani_skill/envs/tasks/flexiv_dual_arm.py) |
+| Rizon4 与 Grav 控制器 | [flexiv_rizon4.py](src/simulation/mani_skill/agents/robots/flexiv_rizon4/flexiv_rizon4.py) |
+| 机械臂模型来源与再生成 | [模型说明](src/simulation/mani_skill/assets/robots/flexiv_rizon4/README.md) |
 
-- [X] **SAPIEN Simulation Environment**: Install and Play!
-
-  - Virtual teleop setup mirroring physical hardware
-  - Rapid prototyping and testing capabilities
-  - Integration with existing SAPIEN workflows
-- [ ] **ROS2 Support**
-- [ ] **Docker Image**
-- [ ] **Humanoid System: Config4**
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Here's how you can help:
-
-### 💡 Feature Requests
-
-### 🔧 Code Contributions
-
-### 🤖 Adding New Robot Support
-
----
-
-## ❓ FAQ
-
-### 1. Is this project compatible with my XXX robot arm?
-**A:** Please first refer to the **Supported Robots** section above, where part of compatible arms are listed along with corresponding config.  Note that this project aims to provide a **universal teleoperation framework** and example control code. Here, “compatibility” means that the operator can intuitively control the corresponding follower arm on hardware side by using UArm.  
-This is independent of different brands’ software APIs — it only depends on the **joint topology** of the robot.  To find your robot’s joint topology, check [Hardware Guide](https://docs.google.com/document/d/1TjhJOeJXsD5kmoYF-kuWfPju6WSUeSnivJiU7TH4vWs/edit?tab=t.0#heading=h.k991lzlarfb8).
-
-
----
-
-### 2. How can I develop based on my own follower arm?
-**A:** Start by reading [`LeRobot-Anything-U-Arm/src/uarm/scripts/Uarm_teleop/servo_reader`](https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm/blob/main/src/uarm/scripts/Uarm_teleop/servo_reader.py).  
-This script reads all UArm joint angles and is wrapped as a ROS node.  
-You need to write a **subscriber** based on your follower arm’s API that receives joint commands from the `'/servo_angles'` topic and sends them to your arm.  [`Dobot Controller`](https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm/blob/main/src/uarm/scripts/Follower_Arm/Dobot/servo2Dobot.py) is a simple example.
-
-If you prefer not to use ROS communication, you can directly read the UArm’s servo command data and send them to your follower arm.  
-See this [`ARX example`](https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm/blob/main/src/uarm/scripts/Follower_Arm/ARX/arx_teleop.py) for reference.
-
-
-## 👥 Contributors
-
-- **Yanwen Zou** - Hardware&Software System Design
-- **Yanhan Sun** - Feetech Version Design
-- **Zhaoye Zhou** - Hareware Assemble and Adjustment
-- **Chenyang Shi** - SAPIEN and website setup
-- **Nuobei Zhu** - Hardware and Production Optimization 
-- **Zewei Ye** - LeRobot adaptation and real-world Experiment
-- **Jiaqi Lu** - Real-world Experiment
-- **Jie Yi** - Real-world Experiment
-- **Siyuan Wang, Lixing Zou** - Hardware Assemble
-- **Junda Huang** - Idea Discussion and website setup
-- **Gaotian Wang** - Idea Discussion
-
-This project builds upon the excellent work of:
-
-- [LeRobot](https://github.com/huggingface/lerobot) - The foundation for robot learning
-- [SO-100/SO-101](https://github.com/TheRobotStudio/SO-ARM100) - Hardware inspiration
-- [XLeRobot](https://github.com/Vector-Wangel/XLeRobot) - Extended robot support
-- [Gello](https://github.com/wuphilipp/gello_mechanical/tree/main) - Hardware inspiration
-
-Thanks to all the talented contributors behind these detailed and professional projects! 
-
-You are also welcomed to join our WeChat Community for discussion and questions by contacting freeniannian (WeChat) to get into the WeChat Group.
-
----
-
-## 🔧 Order
-If you are tired of DIY, buy it by contacting freeniannian (WeChat) for purchase. No oversea service. 
-Please note your Robotic Arm brand and model. 下单/咨询请注明使用的机械臂具体品牌型号。如有技术问题需要解答。请扫描社区二维码群里咨询，或者联系 freeniannian (WeChat) 拉群。
-<div align="center">
-<img src="pics/so101provider.jpg" width="200" />
-</div>
-
-<div align="center">
-
-**Made with ❤️ for the robotics community**
-
-[![GitHub stars](https://img.shields.io/github/stars/MINT-SJTU/Lerobot-Anything-U-arm?style=social)](https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm)
-[![GitHub forks](https://img.shields.io/github/forks/MINT-SJTU/Lerobot-Anything-U-arm?style=social)](https://github.com/MINT-SJTU/LeRobot-Anything-U-Arm)
-
-</div>
+Flexiv 模型来自 [Flexiv 官方 flexiv_description](https://github.com/flexivrobotics/flexiv_description)，
+其许可证与上游版本记录保存在模型目录。项目许可证见 [LICENSE.txt](LICENSE.txt)。

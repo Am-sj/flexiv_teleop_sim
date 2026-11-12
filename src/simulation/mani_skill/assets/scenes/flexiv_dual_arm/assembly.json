@@ -1,0 +1,121 @@
+{
+  "source": "\u975e\u5915\u53cc\u81c2\u7acb\u67f1\u673a\u68b0\u81c2\u5e95\u5ea7-20260523.stp",
+  "sha256": "fbf4f3db2bba4e5e41e5cacf615332f13512255650677dbcd5f32275f19b1ef7",
+  "cad_units": "mm",
+  "world_units": "m",
+  "cad_origin_mm": [
+    -23.05,
+    -17.5,
+    -95.0
+  ],
+  "cad_to_world_rotation": [
+    [
+      0.0,
+      -1.0,
+      0.0
+    ],
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "bounds_m": [
+    [
+      -0.43,
+      -0.43,
+      0.0
+    ],
+    [
+      0.43,
+      0.4300000000000001,
+      1.3949999999750164
+    ]
+  ],
+  "solid_count": 36,
+  "triangle_count": 251542,
+  "mounts": {
+    "left": {
+      "position": [
+        0.115,
+        0.25,
+        1.305
+      ],
+      "quaternion_wxyz": [
+        -0.5,
+        0.5,
+        -0.5,
+        0.5
+      ],
+      "connector_direction": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "cad_center_mm": [
+        226.95,
+        -132.5,
+        1210.0
+      ],
+      "cad_face": 319,
+      "arm_qpos": [
+        -0.323465,
+        1.963841,
+        0.553907,
+        2.263673,
+        2.451158,
+        0.345103,
+        0.0
+      ]
+    },
+    "right": {
+      "position": [
+        0.115,
+        -0.25,
+        1.305
+      ],
+      "quaternion_wxyz": [
+        0.5,
+        0.5,
+        0.5,
+        0.5
+      ],
+      "connector_direction": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "normal": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "cad_center_mm": [
+        -273.05,
+        -132.5,
+        1210.0
+      ],
+      "cad_face": 273,
+      "arm_qpos": [
+        0.180512,
+        1.993543,
+        -0.712481,
+        2.561961,
+        -2.593623,
+        0.773324,
+        -1.348068
+      ]
+    }
+  },
+  "pose_reference": "Approximate elbow-out, forearms-forward, grippers-down posture from reference.jpg; not measured robot joint angles."
+}

@@ -3,6 +3,7 @@ from .dexterity import *
 from .digital_twins import *
 from .drawing import *
 from .empty_env import EmptyEnv
+from .flexiv_dual_arm import FlexivDualArmEnv
 from .fmb import *
 from .humanoid import *
 from .mobile_manipulation import *

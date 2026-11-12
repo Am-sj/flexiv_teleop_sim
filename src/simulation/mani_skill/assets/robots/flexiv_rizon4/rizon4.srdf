@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<robot name="flexiv_rizon4">
+  <!-- The rigid flange assembly has overlapping collision meshes at its seam. -->
+  <disable_collisions link1="link7" link2="grav_base_link" reason="Default"/>
+</robot>
