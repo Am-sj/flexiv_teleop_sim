@@ -97,8 +97,74 @@ env.close()
 
 该装配也支持现有的 `pd_joint_delta_pos`、`pd_ee_delta_pose` 控制模式；
 它们的单臂动作维度分别为 8、7。`hold_actions` 仅用于 `pd_joint_pos`。
-现有 `teleop_sim.py` 保持单臂串口遥操作流程；本装配的两个控制接口
-可用于后续接入两套 UArm，当前查看器不读取串口。
+现有 `teleop_sim.py` 保持单臂串口遥操作流程；`dual_flexiv_viewer.py`
+只发送保持姿态的目标，不读取串口。两套 USB UArm 的遥操作入口为 `dual_teleop_sim.py`。
+
+
+## 双主臂遥操作与映射调整
+
+```bash
+python dual_teleop_sim.py --scene Empty-v1 \
+  --left-port /dev/ttyUSB0 --right-port /dev/ttyUSB1 \
+  --mapping-mode joint
+```
+
+`--scene FlexivDualArm-v1` 加载立柱和双臂；`--scene Empty-v1` 保留同样的
+左右固定安装位姿及初始关节姿态，但不加载立柱。空场景也不包含立柱的碰撞体。
+左右主臂各用一个串口，每套读 `000–007`；两侧摆好参考姿态、释放扳机并保持不动，
+在终端按一次 Enter 请求两侧标定，两侧完整成功后才推进遥操作仿真。
+标定只采集角度参考，不识别关节顺序、正负方向或基座安装旋转。
+默认逐帧输出 `[left] Servo angles (degrees): [...]` 和对应的 `[right]` 行，
+与单臂输出同样的标定后偏移（度），数组位置 0–7 对应舵机 000–007。
+可用 `--no-debug-angles` 关闭输出，原 `--debug-angles` 命令仍可使用。
+`--rate` 默认 50 Hz，同时控制采集及消费循环的目标频率；无新数据不推进仿真。
+串口、PWM、扳机阈值、控制后等待和默认材质参数与单臂对齐，完整参数见
+[README.md](README.md#双-uarm--双臂-rizon4)。
+
+默认 `joint` 模式保持与单臂一致的关节位置控制策略：
+
+```text
+q_target[side] = clip(q_initial[side] + signs[side] * scales[side]
+                     * radians(current_degrees - calibration_degrees)[indices[side]],
+                     joint_lower, joint_upper)
+```
+
+每侧用自己的初始角度、限位和夹爪状态；每个仿真关节的输入集中在
+`dual_teleop_sim.py` 顶部 `ARM_MAPPING["left"]` 和 `ARM_MAPPING["right"]`：
+
+| 字段 | 含义 |
+| --- | --- |
+| `servo_indices` | 按仿真 joint1–joint7 顺序填写输入通道 0–6，每个通道恰好出现一次 |
+| `joint_signs` | 按仿真 joint1–joint7 顺序填写 `+1` 或 `-1` |
+| `joint_scales` | 按仿真 joint1–joint7 顺序填写角度比例，先保留 1 |
+
+当前左右通道顺序均为 `[0,1,2,3,4,5,6]`，方向均沿用单臂 `[1,-1,1,1,1,1,1]`。
+硬件排查交流使用从 0 开始的关节编号：编号 0–6 对应 URDF 名称 joint1–joint7，
+例如编号 1、3、5 对应 joint2、joint4、joint6。列表索引与从 0 开始的编号一致。
+通道 `007` 独立控制夹爪，不参与机械臂通道交换。
+
+按以下步骤确认硬件映射：
+
+1. 标定成功后先固定右主臂，每次只小幅移动左主臂的一个物理关节。
+2. 查看 `[left] Servo angles (degrees): [...]`，记录主要变化的舵机 ID、偏移正负，
+   以及从臂实际转动的关节。其余主臂关节尽量保持不动。
+3. 按机械结构的对应关系确认期望驱动的从臂关节；如果通道对应错了，修改
+   `servo_indices`。例如已确认舵机 001 应控制 joint3、002 应控制 joint2，
+   才将其改为 `[0,2,1,3,4,5,6]`。
+4. 通道对应正确、同一个关节转向相反时，只翻转对应 `joint_signs` 一项。
+   例如要反向 joint3，就翻转列表第三项，而不是舵机编号所在位置。
+5. 用相同方法检查右主臂，单独修改右侧配置。每次修改后重启并重新标定。
+
+记录格式：`侧别 / 移动的物理关节 / 变化的舵机 ID / 偏移正负 / 实际从臂关节 / 期望关节`。
+屏幕左右受相机影响，空间方向按世界 +X 前、+Y 左、+Z 上判断。
+如果转动的是正确对应关节，只是末端在世界坐标中的运动方向不同，不能仅靠正负号修正轴向。
+这时需检查主臂与从臂的安装和参考姿态，并明确是否要改用末端空间跟随。
+不要为了修正映射改动 `position`、`quaternion_wxyz`；`arm_qpos` 只在需要
+调整准备姿态时修改，修改后应重新验证姿态、关节限位和碰撞。
+
+可选 `--mapping-mode single-world` 是额外的单臂 TCP 运动参考 FK/IK 策略，
+会协调多个从臂关节，不属于默认的逐关节策略。它不替代上述通道核对，
+也不执行碰撞路径规划。
 
 ## 网格与碰撞
 
@@ -122,5 +188,5 @@ python src/simulation/mani_skill/assets/scenes/flexiv_dual_arm/import_stand.py \
 
 ```bash
 cd src/simulation
-python -m unittest test_dual_flexiv test_flexiv_rizon4 test_teleop_sim
+python -m unittest test_dual_flexiv test_flexiv_rizon4 test_teleop_sim test_dual_teleop_sim
 ```

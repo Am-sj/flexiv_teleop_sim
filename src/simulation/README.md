@@ -138,6 +138,85 @@ python teleop_sim.py --robot flexiv_rizon4 --scene ReplicaCAD_SceneManipulation-
 ReplicaCAD 数据独立于仓库内机器人网格。缺少场景资源时先使用 `Empty-v1`，
 不要把场景资源缺失当作 Rizon4 模型加载失败。
 
+## 双 UArm → 双臂 Rizon4
+
+```bash
+python dual_teleop_sim.py --scene FlexivDualArm-v1 \
+  --left-port /dev/ttyUSB0 --right-port /dev/ttyUSB1
+```
+
+两套主臂各占一个 USB 串口，每套均读取 `000–007` 共 8 个通道，波特率 115200。
+左右按机器人自身定义：左主臂控制 `flexiv_rizon4-0`（世界 +Y），右主臂控制
+`flexiv_rizon4-1`（世界 -Y）。端口对应反了时交换命令行端口参数。
+
+1. 将两侧主臂摆到各自参考姿态，松开两侧扳机，保持不动。
+2. 在启动终端按 Enter，分别采集两侧全部通道的参考角度。
+3. 两侧都标定成功后开始跟随；未全部成功时只刷新窗口，不推进物理仿真。
+4. 某侧标定失败可再次按 Enter 重试，已成功的一侧保留参考角度。
+5. 输入 `q` 后回车或 Ctrl+C 退出；串口运行异常会停止跟随并退出。
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--scene` / `-s` | `FlexivDualArm-v1` | 直接传给环境创建；场景需支持两台 Rizon4 |
+| `--left-port` | `/dev/ttyUSB0` | 左主臂串口 |
+| `--right-port` | `/dev/ttyUSB1` | 右主臂串口 |
+| `--rate` | `50` | 与单臂相同的采集、控制循环目标频率（Hz），受串口及渲染耗时限制 |
+| `--mapping-mode` | `joint` | 与单臂一致的关节偏移映射；`single-world` 为可选末端映射 |
+| `--debug-angles` / `--no-debug-angles` | 开启 | 与单臂一样逐帧打印标定角度偏移（度），加左右标签；可显式关闭 |
+| `--headless` | 关闭 | 无窗口 CPU 仿真，仍需串口及交互式终端 |
+
+空场景可直接运行：
+
+```bash
+python dual_teleop_sim.py --scene Empty-v1 --left-port /dev/ttyUSB0 --right-port /dev/ttyUSB1
+```
+
+`Empty-v1` 对双 Rizon4 保留现有左右安装方向和初始关节姿态，只显示地面与机械臂，
+不加载立柱。单臂调用仍保持原有行为。
+`--scene` 的使用方式与单臂相同，但其他单臂专用场景不一定支持双机器人。
+与单臂一样，采集和控制循环均以 `--rate` 为目标频率，仅在收到新角度数据时调用一次 `env.step`；
+没有新数据的一侧保持上一目标，两侧均无新数据时只刷新窗口。每步的仿真时长仍由场景的
+`control_freq` 决定，`--rate` 不修改物理步长。串口各自在后台采集，仿真与窗口留在主线程。
+左右参考角度、仿真初始角度和夹爪状态互相独立。与单臂一致：波特率 115200、
+串口读取超时 0.01 秒、每条命令等待 0.008 秒，PWM 范围 500–2500 对应 270°；
+扳机 ≤−40° 时按压切换夹爪，≥−30° 时释放重新使能，夹爪动作关闭 −1、打开 +1。
+控制器为 `pd_joint_pos`，每次控制后等待 0.01 秒，默认静/动摩擦系数均为 10、恢复系数为 0。
+相机与查看器 shader 继续使用双臂场景配置，以保留双臂视角及交互拾取。
+
+默认 `--mapping-mode joint` 与 `teleop_sim.py` 的策略相同：
+
+```text
+主臂偏移 = 当前角度 − 标定角度
+从臂目标 = 该侧仿真初始关节角 + 方向 × 比例 × 主臂对应通道偏移
+```
+
+每侧分别做关节范围裁剪，独立处理夹爪按压切换。不会自动用逆运动学改变其他关节。
+输入映射集中在 `dual_teleop_sim.py` 顶部的 `ARM_MAPPING["left"/"right"]`：
+`servo_indices` 指定仿真 joint1–joint7 分别读取哪个主臂通道（0–6），
+`joint_signs` 指定各仿真关节方向，`joint_scales` 指定比例。
+左右均按通道顺序对应，方向沿用单臂 `[1,-1,1,1,1,1,1]`。
+排查时使用关节编号 0–6，对应 URDF 的 joint1–joint7。墙装后的具体调整应逐关节验证，
+不能仅凭末端“上下变左右”就判断需要交换哪两个通道。
+安装坐标和准备姿态的区别、逐关节排查步骤见 [DUAL_FLEXIV.md](DUAL_FLEXIV.md)。
+
+默认持续输出角度，格式沿用单臂并增加侧别标签，数组位置 0–7 对应舵机 000–007：
+
+```text
+[left] Servo angles (degrees): [ ... ]
+[right] Servo angles (degrees): [ ... ]
+```
+
+保留 `--debug-angles` 以兼容原命令；需要安静运行时使用 `--no-debug-angles`。例如：
+
+```bash
+python dual_teleop_sim.py --scene Empty-v1 --left-port /dev/ttyUSB0 --right-port /dev/ttyUSB1 --no-debug-angles
+```
+
+可显式选择 `--mapping-mode single-world`，复现直立单臂参考的 TCP 世界坐标位移与旋转。
+这属于额外的 FK/IK 策略，不是默认关节映射，也不能用于判断原始通道是否正确。
+它保持侧装位姿，但可能联动多个关节；目标不可达或超出关节限位时保持该侧上一目标并警告。
+它不包含碰撞路径规划，也没有对真实 UArm 的几何参数做标定。
+
 ## 双臂装配
 
 ```bash
@@ -164,7 +243,7 @@ python dual_flexiv_viewer.py --headless --duration 1 --output /tmp/dual_flexiv.p
 仓库保留运行必需的转换网格和纯仿真预览。
 
 `dual_flexiv_viewer.py` 持续发送保持姿态的动作，不读取串口；
-双 UArm 的左右串口、标定与动作路由尚未实现。
+双 UArm 遥操作使用上文的 `dual_teleop_sim.py`。
 
 ### 修改初始姿态
 
@@ -243,7 +322,7 @@ finally:
 ## 验证与文件位置
 
 ```bash
-python -m unittest test_dual_flexiv test_flexiv_rizon4 test_teleop_sim
+python -m unittest test_dual_flexiv test_flexiv_rizon4 test_teleop_sim test_dual_teleop_sim
 ```
 
 这些测试使用 CPU 物理和模拟串口数据，不会驱动硬件，也不验证实际串口线缆或 GPU 窗口。
@@ -251,6 +330,7 @@ python -m unittest test_dual_flexiv test_flexiv_rizon4 test_teleop_sim
 | 文件或目录 | 内容 |
 | --- | --- |
 | [teleop_sim.py](teleop_sim.py) | Zhonglin 串口、手动标定、扳机与关节映射 |
+| [dual_teleop_sim.py](dual_teleop_sim.py) | 双 USB 主臂采集、独立标定、双臂动作路由 |
 | [dual_flexiv_viewer.py](dual_flexiv_viewer.py) | 双臂窗口查看、无窗口运行、PNG 输出 |
 | [flexiv_rizon4.py](mani_skill/agents/robots/flexiv_rizon4/flexiv_rizon4.py) | Rizon4 + Grav 控制器、关键帧、TCP 与接触检测 |
 | [flexiv_dual_arm.py](mani_skill/envs/tasks/flexiv_dual_arm.py) | 双臂环境、底座碰撞、安装与复位 |
@@ -258,5 +338,5 @@ python -m unittest test_dual_flexiv test_flexiv_rizon4 test_teleop_sim
 | [底座资产](mani_skill/assets/scenes/flexiv_dual_arm/README.md) | STEP 网格、安装配置与转换脚本 |
 | [双臂详细说明](DUAL_FLEXIV.md) | 安装坐标、默认关节角与 CAD 转换命令 |
 
-当前范围为仿真位置控制及关节空间遥操作，未实现真实 Flexiv RDK 控制、主臂重力补偿、
-夹持力反馈或双 UArm 串口遥操作。
+当前范围为仿真位置控制、关节空间遥操作及单臂运动参考的双臂 TCP 映射，未实现真实 Flexiv RDK 控制、主臂重力补偿、
+夹持力反馈。双 UArm 串口遥操作已提供，真实硬件关节方向需现场验证。

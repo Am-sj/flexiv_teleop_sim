@@ -22,6 +22,8 @@ class FlexivRizon4(BaseAgent):
     uid = "flexiv_rizon4"
     urdf_path = f"{PACKAGE_ASSET_DIR}/robots/flexiv_rizon4/rizon4.urdf"
     arm_joint_names = [f"joint{i}" for i in range(1, 8)]
+    # Shared by single-arm reset and dual-arm motion retargeting.
+    DEFAULT_ARM_QPOS = (0., -0.69813, 0., 1.570796, 0., 0.69813, 0.)
     ee_link_name = "grav_tcp"
     gripper_joint_names = [
         "finger_width_joint", "left_outer_knuckle_joint", "left_inner_knuckle_joint",
@@ -37,7 +39,7 @@ class FlexivRizon4(BaseAgent):
     def _after_loading_articulation(self):
         # PhysX orders the branched finger joints differently from the XML.
         # Resolve by name, including the virtual width joint (0=closed, 0.1=open).
-        positions = dict(zip(self.arm_joint_names, [0., -0.69813, 0., 1.570796, 0., 0.69813, 0.]))
+        positions = dict(zip(self.arm_joint_names, self.DEFAULT_ARM_QPOS))
         positions.update(finger_width_joint=0.1)
         for name in self.gripper_joint_names[1:]:
             positions[name] = -0.7854 if "inner_finger" in name else 0.7854
