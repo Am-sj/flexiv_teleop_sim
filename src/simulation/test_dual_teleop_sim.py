@@ -10,8 +10,15 @@ from unittest.mock import patch
 import gymnasium as gym
 import numpy as np
 
-from dual_teleop_sim import (AGENT_IDS, ARM_MAPPING, ArmMapping, DualServoTeleoperatorSim,
-                             SerialLeader, SingleArmWorldMapping)
+from dual_teleop_sim import (
+    AGENT_IDS,
+    ARM_MAPPING,
+    INIT_ARM_QPOS,
+    ArmMapping,
+    DualServoTeleoperatorSim,
+    SerialLeader,
+    SingleArmWorldMapping,
+)
 
 
 class FakeSerial:
@@ -56,6 +63,54 @@ class DualTeleopTest(unittest.TestCase):
             leader.zero_angles = leader.read_angles()
             leader.calibrated.set()
 
+    def test_both_arms_start_at_configured_init_pose(self):
+        sim, _ = self.make_sim()
+        agents = sim.env.unwrapped.agent.agents_dict
+        for side, agent_id in AGENT_IDS.items():
+            arm_qpos = (
+                agents[agent_id].controller.controllers["arm"].qpos[0]
+                .detach().cpu().numpy()
+            )
+            np.testing.assert_allclose(arm_qpos, INIT_ARM_QPOS[side], atol=1e-6)
+        self.calibrate(sim)
+        for _ in range(60):
+            for leader in sim.leaders.values():
+                leader.publish_arm_pos(np.zeros(8))
+            self.assertTrue(sim.step_if_ready())
+        for side, agent_id in AGENT_IDS.items():
+            arm_qpos = (
+                agents[agent_id].controller.controllers["arm"].qpos[0]
+                .detach().cpu().numpy()
+            )
+            np.testing.assert_allclose(arm_qpos, INIT_ARM_QPOS[side], atol=0.02)
+
+    def test_init_pose_differing_from_scene_pose_is_held(self):
+        shifted = {side: list(np.add(qpos, [0.] * 6 + [.3]))
+                   for side, qpos in INIT_ARM_QPOS.items()}
+        with patch.dict(INIT_ARM_QPOS, shifted):
+            sim, _ = self.make_sim()
+        self.calibrate(sim)
+        for _ in range(60):
+            for leader in sim.leaders.values():
+                leader.publish_arm_pos(np.zeros(8))
+            self.assertTrue(sim.step_if_ready())
+        for side, agent_id in AGENT_IDS.items():
+            arm = sim.env.unwrapped.agent.agents_dict[agent_id].controller.controllers["arm"]
+            np.testing.assert_allclose(arm.qpos[0].numpy(), shifted[side], atol=0.02)
+
+    def test_init_pose_validation_rejects_invalid_values(self):
+        sim, _ = self.make_sim()
+        agents = sim.env.unwrapped.agent.agents_dict
+        for invalid in (
+            [0.] * 6,
+            [0.] * 6 + [float("nan")],
+            [0.] * 6 + [100.],
+        ):
+            with self.subTest(init_qpos=invalid), patch.dict(
+                    INIT_ARM_QPOS, {"left": invalid}):
+                with self.assertRaises(ValueError):
+                    sim._set_custom_init_pose(agents)
+
     def test_serial_samples_drive_independent_agents_and_grippers(self):
         sim, ports = self.make_sim()
         initial = {side: mapper.initial.copy() for side, mapper in sim.mappings.items()}
@@ -78,7 +133,8 @@ class DualTeleopTest(unittest.TestCase):
             expected[0 if side == "left" else 1] += np.deg2rad(5.4) * (1 if side == "left" else -1)
             np.testing.assert_allclose(mapper.action[:7], expected, atol=1e-6)
             agent = sim.env.unwrapped.agent.agents_dict[AGENT_IDS[side]]
-            np.testing.assert_allclose(agent.controller.controllers["arm"].qpos[0].numpy(), expected, atol=0.02)
+            actual = agent.controller.controllers["arm"].qpos[0].numpy()
+            np.testing.assert_allclose(actual, expected, atol=0.02)
             width = agent.controller.controllers["gripper"].qpos[0, 0].item()
             self.assertLess(width, 0.005) if side == "left" else self.assertGreater(width, 0.095)
         # Release and press left again; right trigger state remains independent.
@@ -144,7 +200,8 @@ class DualTeleopTest(unittest.TestCase):
             self.assertTrue(sim.step_if_ready())
         for side, mapper in sim.mappings.items():
             agent = sim.env.unwrapped.agent.agents_dict[AGENT_IDS[side]]
-            np.testing.assert_allclose(agent.controller.controllers["arm"].qpos[0].numpy(), mapper.initial, atol=0.02)
+            actual = agent.controller.controllers["arm"].qpos[0].numpy()
+            np.testing.assert_allclose(actual, mapper.initial, atol=0.02)
         sim.env.reset(seed=0)
         for side, uid in AGENT_IDS.items():
             agent = sim.env.unwrapped.agent.agents_dict[uid]
@@ -191,8 +248,7 @@ class DualTeleopTest(unittest.TestCase):
         self.addCleanup(sim.close)
         for side, mapper in sim.mappings.items():
             self.assertIs(type(mapper), ArmMapping)
-            # Same input, initial pose and limits must give exactly the same
-            # arm/gripper targets as the existing single-arm implementation.
+            # Dual hardware reverses joint6 relative to the single-arm mapping.
             single = ServoTeleoperatorSim.__new__(ServoTeleoperatorSim)
             single.robot_uids = "flexiv_rizon4"
             single.sim_init_angles = mapper.initial.copy()
@@ -202,7 +258,13 @@ class DualTeleopTest(unittest.TestCase):
             single.trigger_pressed = False
             for trigger in (0., -50., -50., 0., -50.):
                 pose = [.02, -.03, .04, -.05, .06, -.07, .08, np.deg2rad(trigger)]
-                np.testing.assert_allclose(mapper.convert(pose), single.convert_pose_to_action(pose), atol=1e-6)
+                single_pose = pose.copy()
+                single_pose[5] *= -1
+                np.testing.assert_allclose(
+                    mapper.convert(pose),
+                    single.convert_pose_to_action(single_pose),
+                    atol=1e-6,
+                )
 
     def test_mapping_permutation_limits_and_invalid_samples(self):
         sim, _ = self.make_sim()
@@ -277,7 +339,9 @@ class WorldMappingTest(unittest.TestCase):
                 pose = np.zeros(8)
                 pose[channel] = sign * .1
                 for side, mapper in self.mappers.items():
-                    reference = self.single_target(pose)
+                    reference_pose = pose.copy()
+                    reference_pose[5] *= -1
+                    reference = self.single_target(reference_pose)
                     single_delta_rotation = (reference.to_transformation_matrix()[:3, :3]
                                              @ self.single_initial.to_transformation_matrix()[:3, :3].T)
                     with self.subTest(side=side, channel=channel, sign=sign):
@@ -337,25 +401,17 @@ class WorldMappingTest(unittest.TestCase):
 
 
 class SerialWorkerTest(unittest.TestCase):
-    def test_default_angle_output_matches_single_arm_with_side_label(self):
-        from teleop_sim import ServoTeleoperatorSim
+    def test_default_is_quiet_and_published_sample_is_numpy(self):
         stop, errors = Event(), Queue()
         with patch("dual_teleop_sim.serial.Serial", return_value=FakeSerial()):
             leader = SerialLeader("right", "/dev/fake", 50., stop, errors)
         self.addCleanup(leader.close)
-        single = ServoTeleoperatorSim.__new__(ServoTeleoperatorSim)
-        pose = [0.01 * i for i in range(8)]
-        with patch("builtins.print") as output:
-            single.default_sender(pose)
-            single_line = output.call_args.args[0]
-            leader.default_sender(pose)
-            self.assertEqual(output.call_args.args[0], f"[right] {single_line}")
-            count = output.call_count
-            leader.default_sender(pose)
-            self.assertEqual(output.call_count, count + 1)
-            leader.debug_angles = False
-            leader.default_sender(pose)
-            self.assertEqual(output.call_count, count + 1)
+        self.assertFalse(leader.debug_angles)
+        pose = np.arange(8, dtype=np.float64)
+        leader.publish_arm_pos(pose)
+        published = leader.latest()
+        self.assertIsInstance(published, np.ndarray)
+        np.testing.assert_array_equal(published, pose)
 
     def test_failed_reference_retry_and_stream_failure(self):
         device = FakeSerial()

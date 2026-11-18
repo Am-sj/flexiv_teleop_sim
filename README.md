@@ -85,6 +85,14 @@ python teleop_sim.py --robot flexiv_rizon4 --scene Empty-v1 --serial-port /dev/t
 计算后的目标角度受 Rizon4 关节限位约束。扳机相对标定位置转到 **−40° 或以下**时切换一次开合，
 松回 **−30° 或以上**后可再次触发。夹爪初始张开，按住不重复触发，松开保持当前状态。
 
+### 用两个 UArm 遥操作双臂
+
+```bash
+python dual_teleop_sim.py --left-port /dev/ttyUSB0 --right-port /dev/ttyUSB1
+```
+
+标定方式与单臂相同：两台 UArm 都保持静止后按 Enter。
+
 ### 查看双臂装配
 
 ```bash
@@ -138,7 +146,7 @@ python dual_flexiv_viewer.py --headless --duration 1 --output /tmp/dual_flexiv.p
 无需连接 UArm、无需打开窗口：
 
 ```bash
-python -m unittest test_dual_flexiv test_flexiv_rizon4 test_teleop_sim
+python -m unittest test_dual_flexiv test_flexiv_rizon4 test_dual_teleop_sim test_teleop_sim
 ```
 
 覆盖安装方向、关节限位、双臂独立控制、夹爪联动与接触释放、手动标定和扳机切换。

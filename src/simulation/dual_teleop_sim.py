@@ -21,24 +21,40 @@ import sapien
 from mani_skill.agents.robots.flexiv_rizon4.flexiv_rizon4 import FlexivRizon4
 
 
-TRIGGER_PRESS_ANGLE = np.deg2rad(-40.)
-TRIGGER_RELEASE_ANGLE = np.deg2rad(-30.)
-
 SIDES = ("left", "right")
 AGENT_IDS = {"left": "flexiv_rizon4-0", "right": "flexiv_rizon4-1"}
-# List indices 0..6 correspond to URDF joint1..joint7. Adjust after hardware checks.
+# Radians, joint1..joint7; defaults are the collision-free FlexivDualArm-v1 mount poses.
+INIT_ARM_QPOS = {
+    "left": [-0.323465, 1.963841, 0.553907, 2.263673, 2.451158, 0.345103, 0.0],
+    "right": [0.180512, 1.993543, -0.712481, 2.561961, -2.593623, 0.773324, -1.348068],
+}
+TRIGGER_PRESS_ANGLE = np.deg2rad(-40.)
+TRIGGER_RELEASE_ANGLE = np.deg2rad(-30.)
+PWM_MIN = 500
+PWM_MAX = 2500
+ANGLE_RANGE_DEG = 270
+BAUDRATE = 115200
+NUM_SERVOS = 8
+# Indexed by follower joint1..joint7. Adjust each side after hardware checks.
 ARM_MAPPING = {
     "left": dict(
         servo_indices=[0, 1, 2, 3, 4, 5, 6],
-        joint_signs=[1, -1, 1, 1, 1, 1, 1],
+        joint_signs=[1, -1, 1, 1, 1, -1, 1],
         joint_scales=[1.] * 7,
     ),
     "right": dict(
         servo_indices=[0, 1, 2, 3, 4, 5, 6],
-        joint_signs=[1, -1, 1, 1, 1, 1, 1],
+        joint_signs=[1, -1, 1, 1, 1, -1, 1],
         joint_scales=[1.] * 7,
     ),
 }
+
+
+def _arm_joint_indices(agent):
+    return np.array([
+        agent.robot.active_joints_map[name].active_index[0].item()
+        for name in agent.arm_joint_names
+    ], dtype=int)
 
 
 class ArmMapping:
@@ -55,9 +71,13 @@ class ArmMapping:
         self.signs = np.asarray(mapping["joint_signs"], dtype=np.float32)
         self.scales = np.asarray(mapping["joint_scales"], dtype=np.float32)
         if (sorted(self.indices.tolist()) != list(range(7))
-                or self.signs.shape != (7,) or not np.isin(self.signs, [-1, 1]).all()
-                or self.scales.shape != (7,) or not np.isfinite(self.scales).all()):
-            raise ValueError("Invalid arm mapping: expected seven channels, signs and finite scales")
+                or self.signs.shape != (7,)
+                or not np.isin(self.signs, [-1, 1]).all()
+                or self.scales.shape != (7,)
+                or not np.isfinite(self.scales).all()):
+            raise ValueError(
+                "Invalid arm mapping: expected seven channels, signs and finite scales"
+            )
         self.closed = False
         self.pressed = False
         self.action = np.r_[self.initial, 1.].astype(np.float32)
@@ -90,10 +110,7 @@ class SingleArmWorldMapping(ArmMapping):
         self.label = f"{agent.uid}-{agent._agent_idx}"
         self.model = agent.robot.create_pinocchio_model()
         self.link_index = agent.tcp.index
-        self.arm_indices = np.array([
-            agent.robot.active_joints_map[name].active_index[0].item()
-            for name in agent.arm_joint_names
-        ], dtype=int)
+        self.arm_indices = _arm_joint_indices(agent)
         self.seed = agent.robot.qpos[0].detach().cpu().numpy().astype(np.float64).copy()
         self.mask = np.zeros(len(self.seed), dtype=np.int32)
         self.mask[self.arm_indices] = 1
@@ -157,25 +174,25 @@ class SingleArmWorldMapping(ArmMapping):
 
 
 class SerialLeader:
-    """Single-arm serial acquisition strategy, with independent state per side."""
+    """Read one UArm leader and publish calibrated angle samples.
 
-    def __init__(self, side, port, rate, stop_event, errors, debug_angles=True):
+    The simulation thread owns calibration requests; this leader's worker
+    thread owns serial I/O and publishes the latest sample through a queue.
+    """
+
+    def __init__(self, side, port, rate, stop_event, errors, debug_angles=False):
         self.side = side
-        self.SERIAL_PORT = port
-        self.BAUDRATE = 115200
-        self.num_servos = 8
         self.rate = rate
         self.stop_event = stop_event
         self.errors = errors
         self.debug_angles = debug_angles
+        self.last_debug_time = -float("inf")
         self.calibration_requested = Event()
         self.calibrated = Event()
-        self.arm_pos_queue = Queue(maxsize=1)
-        self.zero_angles = [0.0] * self.num_servos
-        self.ser = serial.Serial(self.SERIAL_PORT, self.BAUDRATE,
-                                 timeout=0.01, write_timeout=0.5)
-        self.thread = Thread(target=self.angle_stream_loop, args=(self.default_sender,),
-                             name=f"{side}-serial", daemon=True)
+        self.samples = Queue(maxsize=1)
+        self.zero_angles = [0.] * NUM_SERVOS
+        self.ser = serial.Serial(port, BAUDRATE, timeout=0.01, write_timeout=0.5)
+        self.thread = Thread(target=self._loop, name=f"{side}-serial", daemon=True)
         try:
             self._init_servos()
         except Exception:
@@ -184,90 +201,74 @@ class SerialLeader:
 
     def _init_servos(self):
         self.send_command("#000PVER!")
-        for i in range(self.num_servos):
+        for i in range(NUM_SERVOS):
             self.send_command("#000PCSK!")
             self.send_command(f"#{i:03d}PULK!")
-        print(f"[INFO] {self.side}: Servos unlocked; waiting for manual calibration")
 
     def send_command(self, command):
         self.ser.write(command.encode("ascii"))
         time.sleep(0.008)
         return self.ser.read_all().decode("ascii", errors="ignore")
 
-    def pwm_to_angle(self, response_str, servo_num, pwm_min=500, pwm_max=2500,
-                     angle_range=270):
-        match = re.search(rf"#{servo_num:03d}P(\d{{4}})", response_str)
-        if match is None:
-            return None
-        return (int(match.group(1)) - pwm_min) / (pwm_max - pwm_min) * angle_range
-
     def read_angles(self):
         angles = []
-        for i in range(self.num_servos):
+        for i in range(NUM_SERVOS):
             response = self.send_command(f"#{i:03d}PRAD!")
-            angle = self.pwm_to_angle(response.strip(), i)
-            if angle is None or not np.isfinite(angle):
-                raise ValueError(f"{self.side} servo {i:03d}: invalid response {response!r}")
-            angles.append(angle)
+            angles.append(self.pwm_to_angle(response, i))
         return np.asarray(angles)
 
-    def request_calibration(self):
-        if self.calibrated.is_set():
-            print(f"[INFO] {self.side}: Already calibrated; teleoperation active")
-            return
-        self.calibration_requested.set()
+    def pwm_to_angle(self, response, index):
+        match = re.search(rf"#{index:03d}P(\d{{4}})", response)
+        if match is None:
+            raise ValueError(
+                f"{self.side} servo {index:03d}: invalid response {response!r}"
+            )
+        pwm = int(match.group(1))
+        return (pwm - PWM_MIN) / (PWM_MAX - PWM_MIN) * ANGLE_RANGE_DEG
 
-    def _calibrate_servos(self):
-        # Commit only a complete reference; a failed channel leaves it unchanged.
-        reference = self.read_angles()
-        self.zero_angles = reference.tolist()
-        self.calibrated.set()
-        print(f"[INFO] {self.side}: Calibration complete; waiting for both leaders before following")
+    def request_calibration(self):
+        if not self.calibrated.is_set():
+            self.calibration_requested.set()
 
     def publish_arm_pos(self, arm_pos):
-        while True:
-            try:
-                self.arm_pos_queue.get_nowait()
-            except Empty:
-                break
-        self.arm_pos_queue.put_nowait(list(arm_pos))
+        self.latest()
+        self.samples.put_nowait(np.asarray(arm_pos))
 
-    def get_latest_arm_pos(self, timeout=0.0):
+    def latest(self):
         try:
-            return self.arm_pos_queue.get(timeout=timeout)
+            return self.samples.get_nowait()
         except Empty:
             return None
 
-    def default_sender(self, arm_pos):
-        if self.debug_angles:
-            print(f"[{self.side}] Servo angles (degrees): {np.degrees(arm_pos)}")
-
-    def angle_stream_loop(self, on_send):
-        period = max(1.0 / self.rate, 1e-6)
-        next_time = time.monotonic()
+    def _loop(self):
         try:
             while not self.stop_event.is_set():
+                tick = time.monotonic()
                 if not self.calibrated.is_set():
-                    if not self.calibration_requested.wait(timeout=0.1):
+                    if not self.calibration_requested.wait(0.1):
                         continue
                     if self.stop_event.is_set():
                         break
                     self.calibration_requested.clear()
                     try:
-                        self._calibrate_servos()
+                        reference = self.read_angles()
                     except ValueError as exc:
-                        print(f"[ERROR] {exc}. Hold UArm still and press Enter to retry.")
+                        print(f"[ERROR] {exc}; hold both leaders still and press Enter to retry.")
                         continue
-                    next_time = time.monotonic()
-                arm_pos = np.radians(self.read_angles() - self.zero_angles)
-                self.publish_arm_pos(arm_pos)
-                on_send(list(arm_pos))
-                next_time += period
-                sleep_dt = next_time - time.monotonic()
-                if sleep_dt > 0:
-                    self.stop_event.wait(sleep_dt)
+                    self.zero_angles = reference
+                    self.calibrated.set()
+                    print(f"[INFO] {self.side}: all eight channels calibrated")
                 else:
-                    next_time = time.monotonic()
+                    offsets = np.radians(self.read_angles() - self.zero_angles)
+                    self.publish_arm_pos(offsets)
+                    if self.debug_angles and time.monotonic() - self.last_debug_time >= 0.5:
+                        values = " ".join(
+                            f"{i:03d}={value:+.1f}"
+                            for i, value in enumerate(np.degrees(offsets))
+                        )
+                        print(f"[ANGLES] {self.side} offsets (deg): {values}")
+                        self.last_debug_time = time.monotonic()
+                self.stop_event.wait(max(0., 1. / self.rate - (time.monotonic() - tick)))
         except Exception as exc:
             self.errors.put((self.side, exc))
             self.stop_event.set()
@@ -283,25 +284,21 @@ class SerialLeader:
 
 
 class DualServoTeleoperatorSim:
-    """Two serial producers and one simulation consumer, using single-arm defaults.
+    """Run two independent UArm leaders against a dual Flexiv simulation.
 
-    Rendering and terminal polling stay on the main thread. Both leaders must
-    finish calibration; each follower retains its own reference and trigger.
+    The main thread owns environment stepping and calibration input. Each leader
+    owns its serial connection in a dedicated worker thread.
     """
 
     def __init__(self, scene="FlexivDualArm-v1", left_port="/dev/ttyUSB0",
                  right_port="/dev/ttyUSB1", rate=50., headless=False,
-                 mapping_mode="joint", debug_angles=True):
+                 mapping_mode="joint", debug_angles=False):
         if mapping_mode not in ("single-world", "joint"):
             raise ValueError("Unknown mapping mode")
         if not np.isfinite(rate) or rate <= 0:
             raise ValueError("--rate must be finite and positive")
         if Path(left_port).resolve() == Path(right_port).resolve():
             raise ValueError("Left and right leaders require different serial ports")
-        self.scene = scene
-        self.robot_uids = ("flexiv_rizon4", "flexiv_rizon4")
-        self.control_mode = "pd_joint_pos"
-        self.rate = rate
         self.stop_event = Event()
         self.errors = Queue()
         self.leaders = {}
@@ -309,19 +306,18 @@ class DualServoTeleoperatorSim:
         self.headless = headless
         try:
             self.env = gym.make(
-                self.scene, robot_uids=self.robot_uids,
-                obs_mode="state", control_mode=self.control_mode, sim_backend="cpu",
+                scene, robot_uids=("flexiv_rizon4", "flexiv_rizon4"),
+                obs_mode="state", control_mode="pd_joint_pos", sim_backend="cpu",
                 render_backend="none" if headless else "sapien_cuda",
                 render_mode=None if headless else "human",
                 sim_config=dict(default_materials_config=dict(
                     static_friction=10., dynamic_friction=10., restitution=0.)),
-                # Keep scene camera/shader defaults for dual-arm viewer picking.
             )
             self.env.reset(seed=0)
-            print("Action space:", self.env.action_space)
             agents = getattr(self.env.unwrapped.agent, "agents_dict", {})
             if set(agents) != set(AGENT_IDS.values()):
                 raise ValueError(f"Scene {scene!r} must support two Flexiv Rizon4 agents")
+            self._set_custom_init_pose(agents)
             mapper_type = SingleArmWorldMapping if mapping_mode == "single-world" else ArmMapping
             self.mappings = {
                 side: mapper_type(agents[AGENT_IDS[side]], ARM_MAPPING[side]) for side in SIDES
@@ -329,96 +325,82 @@ class DualServoTeleoperatorSim:
             print(f"[INFO] Arm mapping mode: {mapping_mode}")
             for side, port in zip(SIDES, (left_port, right_port)):
                 self.leaders[side] = SerialLeader(
-                    side, port, self.rate, self.stop_event, self.errors,
+                    side, port, rate, self.stop_event, self.errors,
                     debug_angles=debug_angles,
                 )
         except Exception:
             self.close()
             raise
 
+    def _set_custom_init_pose(self, agents):
+        """Set each arm's configured pose while preserving its gripper joints."""
+        for side in SIDES:
+            agent = agents[AGENT_IDS[side]]
+            arm_controller = agent.controller.controllers["arm"]
+            init_qpos = np.asarray(INIT_ARM_QPOS[side], dtype=np.float64)
+            low = arm_controller.single_action_space.low
+            high = arm_controller.single_action_space.high
+            if (init_qpos.shape != (7,) or not np.isfinite(init_qpos).all()
+                    or np.any(init_qpos < low) or np.any(init_qpos > high)):
+                raise ValueError(
+                    f"INIT_ARM_QPOS[{side!r}] must contain seven finite values "
+                    "within the arm controller joint limits"
+                )
+            qpos = agent.robot.get_qpos()[0].detach().cpu().numpy().copy()
+            qpos[_arm_joint_indices(agent)] = init_qpos.astype(qpos.dtype)
+            agent.reset(qpos)
+            # agent.reset leaves the controller's cached start/target qpos at the scene pose.
+            agent.controller.reset()
+
     def request_calibration(self):
         if all(leader.calibrated.is_set() for leader in self.leaders.values()):
-            print("[INFO] Already calibrated; teleoperation active")
+            print("[INFO] Already calibrated; restart to choose new references")
             return
         for leader in self.leaders.values():
-            if not leader.calibrated.is_set():
-                leader.request_calibration()
+            leader.request_calibration()
 
-    def convert_pose_to_action(self, poses):
-        for side, pose in poses.items():
-            self.mappings[side].convert(pose)
-        return {AGENT_IDS[side]: self.mappings[side].action.copy() for side in SIDES}
-
-    def teleop_sim_handler(self, action, dwell=0.01):
-        if self.env is None or action is None:
-            return
-        self.env.step(action)
-        if not self.headless:
-            self.env.render()
-        self.stop_event.wait(dwell)
-
-    def step_if_ready(self, on_pose=None):
-        # Match single-arm: no step before calibration or without a fresh sample.
+    def step_if_ready(self):
+        # Both full references are required before advancing physics.
         if not all(leader.calibrated.is_set() for leader in self.leaders.values()):
             return False
-        poses = {}
+        fresh_sample = False
         for side, leader in self.leaders.items():
-            pose = leader.get_latest_arm_pos(timeout=0.0)
+            pose = leader.latest()
             if pose is not None:
-                poses[side] = pose
-        if not poses:
+                self.mappings[side].convert(pose)
+                fresh_sample = True
+        if not fresh_sample:
             return False
-        action = self.convert_pose_to_action(poses)
-        handler = self.teleop_sim_handler if on_pose is None else on_pose
-        handler(action)
+        self.env.step({AGENT_IDS[side]: self.mappings[side].action.copy() for side in SIDES})
         return True
-
-    def pose_consumer_loop(self, on_pose):
-        period = max(1.0 / self.rate, 1e-6)
-        next_time = time.monotonic()
-        print("Action Space Shape:", {
-            uid: space.shape[0] for uid, space in self.env.action_space.spaces.items()
-        })
-        while not self.stop_event.is_set():
-            # Poll input here so serial failures can stop the simulation promptly.
-            if select.select([sys.stdin], [], [], 0)[0]:
-                line = sys.stdin.readline()
-                if not line:
-                    print("Terminal input closed; stopping without automatic calibration")
-                    break
-                command = line.strip().lower()
-                if command == "q":
-                    break
-                if command == "":
-                    self.request_calibration()
-            if self.stop_event.is_set():
-                break
-            if not self.step_if_ready(on_pose) and not self.headless:
-                self.env.render()
-            next_time += period
-            sleep_dt = next_time - time.monotonic()
-            if sleep_dt > 0:
-                self.stop_event.wait(sleep_dt)
-            else:
-                next_time = time.monotonic()
 
     def run(self):
         try:
-            for side, leader in self.leaders.items():
-                print(f"[{side}] Starting angle reading thread...")
+            for leader in self.leaders.values():
                 leader.thread.start()
-            print("Starting simulation control loop...")
-            print("Simulation ready. Position BOTH UArms and release BOTH gripper triggers.")
-            print("Keep BOTH UArms still, then press Enter IN THIS TERMINAL to calibrate and start following.")
-            print("Type q + Enter or press Ctrl+C to stop.")
+            print("Position BOTH leaders, release BOTH triggers, and keep both still.")
+            print("Press Enter IN THIS TERMINAL to calibrate. Type q + Enter or Ctrl+C to stop.")
             print("Left → flexiv_rizon4-0 (+Y); right → flexiv_rizon4-1 (-Y).")
-            self.pose_consumer_loop(self.teleop_sim_handler)
+            period = 1. / self.env.unwrapped.control_freq
+            while not self.stop_event.is_set():
+                tick = time.monotonic()
+                # Poll input on the simulation thread so worker errors can stop it.
+                if select.select([sys.stdin], [], [], 0)[0]:
+                    line = sys.stdin.readline()
+                    if not line or line.strip().lower() == "q":
+                        break
+                    if not line.strip():
+                        self.request_calibration()
+                if self.stop_event.is_set():
+                    break
+                self.step_if_ready()
+                if not self.headless:
+                    self.env.render()
+                self.stop_event.wait(max(0., period - (time.monotonic() - tick)))
         except KeyboardInterrupt:
-            print("Received interrupt signal, preparing to stop...")
+            pass
         finally:
             self.close()
-            print("All threads stopped")
-            print("Resource cleanup completed")
         if not self.errors.empty():
             side, exc = self.errors.get_nowait()
             raise RuntimeError(f"{side} serial acquisition stopped: {exc}") from exc
@@ -435,37 +417,44 @@ class DualServoTeleoperatorSim:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Dual robot arm teleoperation simulation program",
+        description=__doc__,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--scene", "-s", default="FlexivDualArm-v1", help="Scene supporting two Rizon4 agents")
-    parser.add_argument("--left-port", default="/dev/ttyUSB0", help="Left UArm serial port")
-    parser.add_argument("--right-port", default="/dev/ttyUSB1", help="Right UArm serial port")
-    parser.add_argument("--rate", type=float, default=50.,
-                        help="Target acquisition and control loop rate (Hz); limited by serial and rendering latency")
-    parser.add_argument("--mapping-mode", choices=["joint", "single-world"], default="joint",
-                        help="joint: same joint-offset strategy as single-arm teleop; single-world: optional TCP retargeting")
-    parser.add_argument("--debug-angles", action=argparse.BooleanOptionalAction, default=True,
-                        help="Print each sample's calibrated servo offsets in degrees, like single-arm teleop")
-    parser.add_argument("--headless", action="store_true", help="Run CPU physics without a window (still requires terminal and leaders)")
+    parser.add_argument(
+        "--scene", "-s", default="FlexivDualArm-v1",
+        help="Scene supporting two Rizon4 agents",
+    )
+    parser.add_argument(
+        "--left-port", default="/dev/ttyUSB0",
+        help="Serial port for the left UArm leader",
+    )
+    parser.add_argument(
+        "--right-port", default="/dev/ttyUSB1",
+        help="Serial port for the right UArm leader",
+    )
+    parser.add_argument(
+        "--rate", type=float, default=50.,
+        help="Target serial scan rate per leader; limited by serial latency",
+    )
+    parser.add_argument(
+        "--mapping-mode", choices=["joint", "single-world"], default="joint",
+        help="joint: same joint-offset strategy as single-arm teleop; "
+             "single-world: optional TCP retargeting",
+    )
+    parser.add_argument(
+        "--debug-angles", action="store_true",
+        help="Print calibrated servo offsets in degrees per side, twice per second",
+    )
+    parser.add_argument(
+        "--headless", action="store_true",
+        help="Run CPU physics without a window (still requires terminal and leaders)",
+    )
     args = parser.parse_args()
-    print("=" * 60)
-    print("Dual robot arm teleoperation simulation program")
-    print("Robot: flexiv_rizon4 + flexiv_rizon4")
-    print(f"Scene: {args.scene}")
-    print(f"Rate: {args.rate} Hz")
-    print(f"Serial port [left]: {args.left_port}")
-    print(f"Serial port [right]: {args.right_port}")
-    print("=" * 60)
     try:
         DualServoTeleoperatorSim(**vars(args)).run()
     except Exception as exc:
-        import traceback
-        print(f"Program runtime error: {exc}", file=sys.stderr)
-        traceback.print_exc()
-        return 1
-    return 0
+        parser.exit(1, f"Error: {exc}\n")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
