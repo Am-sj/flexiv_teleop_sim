@@ -25,9 +25,13 @@ SIDES = ("left", "right")
 AGENT_IDS = {"left": "flexiv_rizon4-0", "right": "flexiv_rizon4-1"}
 # Radians, joint1..joint7; defaults are the collision-free FlexivDualArm-v1 mount poses.
 INIT_ARM_QPOS = {
-    "left": [-0.323465, 1.963841, 0.553907, 2.263673, 2.451158, 0.345103, 0.0],
-    "right": [0.180512, 1.993543, -0.712481, 2.561961, -2.593623, 0.773324, -1.348068],
+    "left": [1.57, -0.6, 0.0, 1.8, 0.0, 0.8, 0.0],
+    "right": [1.57, -0.6, 0.0, 1.8, 0.0, 0.8, 0.0],
 }
+# INIT_ARM_QPOS = {
+#     "left": [-0.323465, 1.963841, 0.553907, 2.263673, 2.451158, 0.345103, 0.0],
+#     "right": [0.180512, 1.993543, -0.712481, 2.561961, -2.593623, 0.773324, -1.348068],
+# }
 TRIGGER_PRESS_ANGLE = np.deg2rad(-40.)
 TRIGGER_RELEASE_ANGLE = np.deg2rad(-30.)
 PWM_MIN = 500
@@ -39,12 +43,12 @@ NUM_SERVOS = 8
 ARM_MAPPING = {
     "left": dict(
         servo_indices=[0, 1, 2, 3, 4, 5, 6],
-        joint_signs=[1, -1, 1, 1, 1, -1, 1],
+        joint_signs=[1, -1, 1, 1, 1, 1, 1],
         joint_scales=[1.] * 7,
     ),
     "right": dict(
         servo_indices=[0, 1, 2, 3, 4, 5, 6],
-        joint_signs=[1, -1, 1, 1, 1, -1, 1],
+        joint_signs=[1, -1, 1, 1, 1, 1, 1],
         joint_scales=[1.] * 7,
     ),
 }
