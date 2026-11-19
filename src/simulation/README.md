@@ -168,7 +168,7 @@ python dual_teleop_sim.py --scene FlexivDualArm-v1 \
 空场景可直接运行：
 
 ```bash
-python dual_teleop_sim.py --scene Empty-v1 --left-port /dev/ttyUSB0 --right-port /dev/ttyUSB1
+python teleop_sim.py --robot flexiv_rizon4 --scene Empty-v1 --serial-port /dev/ttyUSB0
 ```
 
 `Empty-v1` 对双 Rizon4 保留现有左右安装方向和初始关节姿态，只显示地面与机械臂，

@@ -248,7 +248,7 @@ class DualTeleopTest(unittest.TestCase):
         self.addCleanup(sim.close)
         for side, mapper in sim.mappings.items():
             self.assertIs(type(mapper), ArmMapping)
-            # Dual hardware reverses joint6 relative to the single-arm mapping.
+            # The dual-arm mapping uses the same joint directions as single-arm mode.
             single = ServoTeleoperatorSim.__new__(ServoTeleoperatorSim)
             single.robot_uids = "flexiv_rizon4"
             single.sim_init_angles = mapper.initial.copy()
@@ -258,11 +258,9 @@ class DualTeleopTest(unittest.TestCase):
             single.trigger_pressed = False
             for trigger in (0., -50., -50., 0., -50.):
                 pose = [.02, -.03, .04, -.05, .06, -.07, .08, np.deg2rad(trigger)]
-                single_pose = pose.copy()
-                single_pose[5] *= -1
                 np.testing.assert_allclose(
                     mapper.convert(pose),
-                    single.convert_pose_to_action(single_pose),
+                    single.convert_pose_to_action(pose),
                     atol=1e-6,
                 )
 
@@ -339,9 +337,7 @@ class WorldMappingTest(unittest.TestCase):
                 pose = np.zeros(8)
                 pose[channel] = sign * .1
                 for side, mapper in self.mappers.items():
-                    reference_pose = pose.copy()
-                    reference_pose[5] *= -1
-                    reference = self.single_target(reference_pose)
+                    reference = self.single_target(pose)
                     single_delta_rotation = (reference.to_transformation_matrix()[:3, :3]
                                              @ self.single_initial.to_transformation_matrix()[:3, :3].T)
                     with self.subTest(side=side, channel=channel, sign=sign):
