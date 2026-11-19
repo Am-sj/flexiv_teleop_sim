@@ -217,6 +217,31 @@ python dual_teleop_sim.py --scene Empty-v1 --left-port /dev/ttyUSB0 --right-port
 它保持侧装位姿，但可能联动多个关节；目标不可达或超出关节限位时保持该侧上一目标并警告。
 它不包含碰撞路径规划，也没有对真实 UArm 的几何参数做标定。
 
+### 真机运行
+
+真机入口使用 Flexiv RDK 控制两台 Rizon4。Rizon4 环境安装指定版本：
+
+```bash
+python -m pip install flexivrdk==1.9.4.1
+```
+
+该版本对应机器人软件 v3.11.3；此入口不支持面向 Enlight 系列的 RDK 2.x。
+将命令中的机器人序列号、Grav 设备名称和 UArm 串口替换为现场配置：
+
+```bash
+python dual_teleop_real.py \
+  --left-robot-sn "LEFT_RIZON4_SERIAL_NUMBER" \
+  --right-robot-sn "RIGHT_RIZON4_SERIAL_NUMBER" \
+  --left-port /dev/ttyUSB0 \
+  --right-port /dev/ttyUSB1 \
+  --left-gripper-name "LEFT_GN01_DEVICE_NAME" \
+  --right-gripper-name "RIGHT_GN01_DEVICE_NAME"
+```
+
+两台机器人必须已由现场人员置于 Operational、IDLE 状态。程序不会自动使能机器人、清除故障或执行 Grav 初始化。启动后先将两侧 UArm 放到参考姿态并在终端按 Enter 标定；两侧标定成功后，检查工作空间并再次按 Enter 才会开始控制。GN01 扳机控制默认开启；只有明确需要时才传 `--init-grippers` 请求夹爪初始化。按 `q` 后回车或 Ctrl+C 停止。
+
+首版使用默认关节映射 `[1,-1,1,1,1,1,1]`，第 8 通道按压切换夹爪。目标限制为 RDK 实机限位与 Rizon4 URDF 限位的交集，默认关节速度/加速度上限分别为 `0.5 rad/s` 和 `1.0 rad/s²`。真机入口没有碰撞检测或路径规划；首次运行必须在可急停、低速且工作空间清空的条件下验证。
+
 ## 双臂装配
 
 ```bash
